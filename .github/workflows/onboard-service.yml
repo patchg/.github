@@ -32,14 +32,14 @@ jobs:
           sed "s/{{TEAM}}/$TEAM/" .github/templates/doc-mirror.yml.template > /tmp/doc-mirror.yml
           SHA=$(gh api repos/$TARGET/contents/.doc-mirror.yml --jq '.sha' 2>/dev/null || true)
           ARGS=(-f message="chore: add doc-mirror config" -f "content=$(base64 -w0 /tmp/doc-mirror.yml)")
-          [ -n "$SHA" ] && ARGS+=(-f sha="$SHA")
+          [ -n "$SHA" ] && [ "$SHA" != "null" ] && ARGS+=(-f sha="$SHA")
           gh api --method PUT repos/$TARGET/contents/.doc-mirror.yml "${ARGS[@]}"
 
       - name: Add sync workflow
         run: |
           SHA=$(gh api repos/$TARGET/contents/.github/workflows/sync-docs.yml --jq '.sha' 2>/dev/null || true)
           ARGS=(-f message="chore: add doc mirror workflow" -f "content=$(base64 -w0 .github/templates/sync-docs.yml.template)")
-          [ -n "$SHA" ] && ARGS+=(-f sha="$SHA")
+          [ -n "$SHA" ] && [ "$SHA" != "null" ] && ARGS+=(-f sha="$SHA")
           gh api --method PUT repos/$TARGET/contents/.github/workflows/sync-docs.yml "${ARGS[@]}"
 
       - name: Set DOC_MIRROR_TOKEN secret
@@ -48,13 +48,14 @@ jobs:
 
       - name: Scaffold /docs folder (skips if docs already exist)
         run: |
-          SHA=$(gh api repos/$TARGET/contents/docs/README.md --jq '.sha' 2>/dev/null || true)
-          if [ -z "$SHA" ]; then
+          if ! gh api repos/$TARGET/contents/docs/README.md >/dev/null 2>&1; then
             REPO_NAME="${{ inputs.repo_name }}"
             printf "# %s — Documentation\n\nThis /docs folder syncs to docs-central via Doc Mirror.\n\n## Files\n\n- architecture.md — Architecture and design decisions\n- dependencies.yaml — Service dependencies\n- runbook.md — Operational runbook\n\nPush any change on main to trigger a sync to docs-central.\n" "$REPO_NAME" > /tmp/docs-readme.md
             gh api --method PUT repos/$TARGET/contents/docs/README.md \
               -f message="docs: scaffold /docs folder" \
               -f "content=$(base64 -w0 /tmp/docs-readme.md)"
+          else
+            echo "docs/README.md already exists — skipping scaffold"
           fi
 
       - name: Job summary
