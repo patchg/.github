@@ -1,0 +1,73 @@
+name: Onboard Service Repo
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_name:
+        description: 'Repo to onboard — must already exist under patchg'
+        required: true
+        type: string
+      team:
+        description: 'Team name for doc metadata'
+        required: false
+        default: 'platform-team'
+
+jobs:
+  onboard:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.DOC_MIRROR_TOKEN }}
+      TARGET: patchg/${{ inputs.repo_name }}
+      TEAM: ${{ inputs.team }}
+
+    steps:
+      - name: Checkout .github repo (contains templates)
+        uses: actions/checkout@v4
+
+      - name: Verify target repo exists
+        run: gh repo view $TARGET
+
+      - name: Add .doc-mirror.yml
+        run: |
+          sed "s/{{TEAM}}/$TEAM/" .github/templates/doc-mirror.yml.template > /tmp/doc-mirror.yml
+          SHA=$(gh api repos/$TARGET/contents/.doc-mirror.yml --jq '.sha' 2>/dev/null || true)
+          ARGS=(-f message="chore: add doc-mirror config" -f "content=$(base64 -w0 /tmp/doc-mirror.yml)")
+          [ -n "$SHA" ] && ARGS+=(-f sha="$SHA")
+          gh api --method PUT repos/$TARGET/contents/.doc-mirror.yml "${ARGS[@]}"
+
+      - name: Add sync workflow
+        run: |
+          SHA=$(gh api repos/$TARGET/contents/.github/workflows/sync-docs.yml --jq '.sha' 2>/dev/null || true)
+          ARGS=(-f message="chore: add doc mirror workflow" -f "content=$(base64 -w0 .github/templates/sync-docs.yml.template)")
+          [ -n "$SHA" ] && ARGS+=(-f sha="$SHA")
+          gh api --method PUT repos/$TARGET/contents/.github/workflows/sync-docs.yml "${ARGS[@]}"
+
+      - name: Set DOC_MIRROR_TOKEN secret
+        run: |
+          echo "${{ secrets.DOC_MIRROR_TOKEN }}" | gh secret set DOC_MIRROR_TOKEN --repo $TARGET
+
+      - name: Scaffold /docs folder (skips if docs already exist)
+        run: |
+          SHA=$(gh api repos/$TARGET/contents/docs/README.md --jq '.sha' 2>/dev/null || true)
+          if [ -z "$SHA" ]; then
+            REPO_NAME="${{ inputs.repo_name }}"
+            printf "# %s — Documentation\n\nThis /docs folder syncs to docs-central via Doc Mirror.\n\n## Files\n\n- architecture.md — Architecture and design decisions\n- dependencies.yaml — Service dependencies\n- runbook.md — Operational runbook\n\nPush any change on main to trigger a sync to docs-central.\n" "$REPO_NAME" > /tmp/docs-readme.md
+            gh api --method PUT repos/$TARGET/contents/docs/README.md \
+              -f message="docs: scaffold /docs folder" \
+              -f "content=$(base64 -w0 /tmp/docs-readme.md)"
+          fi
+
+      - name: Job summary
+        run: |
+          echo "## ✅ Onboarding Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Repo:** [$TARGET](https://github.com/$TARGET)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| File | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`.doc-mirror.yml\` | ✅ Added |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`.github/workflows/sync-docs.yml\` | ✅ Added |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`DOC_MIRROR_TOKEN\` secret | ✅ Set |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`/docs\` scaffold | ✅ Created |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next step:** Add context files to \`/docs/\` and push to main." >> $GITHUB_STEP_SUMMARY
