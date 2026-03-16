@@ -1,0 +1,71 @@
+# Shared Docs Sync to Mono Repo
+name: Shared Docs Sync to Mono Repo
+
+on:
+  workflow_call:
+    inputs:
+      source_paths:
+        description: 'Paths to sync (e.g., docs/**)'
+        required: true
+        type: string
+      destination_path:
+        description: 'Destination path in mono repo'
+        required: true
+        type: string
+      mono_repo_name:
+        required: false
+        type: string
+        default: ''
+    secrets:
+      DOC_MIRROR_TOKEN:
+        description: 'GitHub PAT with write access to mono repo'
+        required: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set mono repo name
+        id: config
+        run: |
+          if [ -n "${{ inputs.mono_repo_name }}" ]; then
+            echo "mono_repo=${{ inputs.mono_repo_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "mono_repo=docs-central" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout mono repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/${{ steps.config.outputs.mono_repo }}
+          token: ${{ secrets.DOC_MIRROR_TOKEN }}
+          path: mono-repo
+          fetch-depth: 0
+
+      - name: Sync documentation files
+        run: |
+          set -e
+          DEST_DIR="mono-repo/${{ inputs.destination_path }}"
+          mkdir -p "$DEST_DIR"
+          echo "Syncing docs/ to $DEST_DIR"
+          cp -r docs/. "$DEST_DIR"
+          cd mono-repo
+          git config user.name "Doc Mirror Bot"
+          git config user.email "doc-mirror-bot@users.noreply.github.com"
+          if [ -n "$(git status --porcelain)" ]; then
+            git add .
+            git commit -m "sync: docs from ${{ github.repository }}@${{ github.sha }}"
+            git push
+            echo "Docs synced successfully"
+          else
+            echo "No changes to sync"
+          fi
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "Failed to sync docs from ${{ github.repository }}"
